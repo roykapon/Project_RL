@@ -1,6 +1,9 @@
 """
     This file is copied/apdated from https://github.com/berkeleydeeprlcourse/homework/tree/master/hw3
 """
+
+from torchviz import make_dot
+
 import sys
 import pickle
 import numpy as np
@@ -104,10 +107,8 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             obs = torch.from_numpy(obs).type(dtype).unsqueeze(0) / 255.0
             # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
             with torch.no_grad():
-                # print(f"output: {model(Variable(obs, volatile=True)).size()}")
                 return model(Variable(obs, volatile=True)).data.max(1)[1].cpu()
         else:
-            # Changed this!!! return torch.IntTensor([[random.randrange(num_actions)]])
             return torch.IntTensor([[random.randrange(num_actions)]])
 
     # Initialize target q function and q function, i.e. build the model.
@@ -115,6 +116,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
 
     Q = q_func(input_arg, num_actions).type(dtype)
     Q_next = q_func(input_arg, num_actions).type(dtype)
+    Q_next.load_state_dict(Q.state_dict())
     criterion = nn.MSELoss()
 
     ######
@@ -254,6 +256,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             optimizer.step()
             num_param_updates += 1
             # print(f"step = {num_param_updates}")
+            model_q_after = Q(obs_sample).gather(1, act_sample.unsqueeze(1)).squeeze()
 
             # Periodically update
             if num_param_updates % target_update_freq == 0:
@@ -271,7 +274,11 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
         Statistic["best_mean_episode_rewards"].append(best_mean_episode_reward)
 
         if t % LOG_EVERY_N_STEPS == 0 and t > learning_starts:
+            dot = make_dot(model_q, params=dict(Q.named_parameters()))
+            dot.render(directory="autograd graph")
             print(f"error : {(model_q - target_q)[0]}")
+            print(f"error before :\t{criterion(model_q, target_q)}")
+            print(f"error after : \t{criterion(model_q_after, target_q)}")
 
             print("Timestep %d" % (t,))
             print("mean reward (100 episodes) %f" % mean_episode_reward)
