@@ -2,6 +2,7 @@
     This file is copied/apdated from https://github.com/berkeleydeeprlcourse/homework/tree/master/hw3
 """
 
+from importlib.resources import path
 from torchviz import make_dot
 
 import sys
@@ -19,6 +20,12 @@ import torch.autograd as autograd
 
 from utils.replay_buffer import ReplayBuffer
 from utils.gym import get_wrapper_by_name
+
+LEARNING_RATE = 0.0005
+# model parameters path
+PATH = f"G:/My Drive/Uni Exercises/RL/Project_RL/model_parameters/parameters_lr={str(LEARNING_RATE)}.pt"
+LOAD_MODEL = True
+
 
 USE_CUDA = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
@@ -107,7 +114,8 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             obs = torch.from_numpy(obs).type(dtype).unsqueeze(0) / 255.0
             # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
             with torch.no_grad():
-                return model(Variable(obs, volatile=True)).data.max(1)[1].cpu()
+                action_score = model(Variable(obs, volatile=True))
+                return action_score.data.max(1)[1].cpu()
         else:
             return torch.IntTensor([[random.randrange(num_actions)]])
 
@@ -119,10 +127,19 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
     Q_next.load_state_dict(Q.state_dict())
     criterion = nn.MSELoss()
 
+    if LOAD_MODEL:
+        try:
+            print(f"loading model from {PATH}")
+            Q.load_state_dict(torch.load(PATH))
+            Q_next.load_state_dict(torch.load(PATH))
+        except:
+            print(f"model {PATH} not found. starting from scratch")
+
     ######
 
     # Construct Q network optimizer function
-    optimizer = optimizer_spec.constructor(Q.parameters(), **optimizer_spec.kwargs)
+    # optimizer = optimizer_spec.constructor(Q.parameters(), **optimizer_spec.kwargs)
+    optimizer = torch.optim.SGD(Q.parameters(), lr=LEARNING_RATE)
 
     # Construct the replay buffer
     replay_buffer = ReplayBuffer(replay_buffer_size, frame_history_len)
@@ -135,7 +152,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
     best_mean_episode_reward = -float("inf")
     last_obs = env.reset()
     # LOG_EVERY_N_STEPS = 10000
-    LOG_EVERY_N_STEPS = 100
+    LOG_EVERY_N_STEPS = 500
 
     # We initialize some variables here
     done = False
@@ -187,6 +204,8 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
 
         # observe what happens and store in replay buffer
         obs, reward, done, info = env.step(action)
+        if reward > 0:
+            print("goal!")
         replay_buffer.store_effect(idx, action, reward, done)
 
         last_obs = obs
@@ -230,10 +249,10 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
 
             # sample a batch of transitions
             obs_sample, act_sample, rew_sample, next_obs_sample, done_mask = replay_buffer.sample(batch_size)
-            obs_sample = Variable(torch.from_numpy(obs_sample).type(dtype))
+            obs_sample = Variable(torch.from_numpy(obs_sample).type(dtype)) / 255.0
             act_sample = Variable(torch.from_numpy(act_sample).long())
             rew_sample = Variable(torch.from_numpy(rew_sample))
-            next_obs_sample = Variable(torch.from_numpy(next_obs_sample).type(dtype))
+            next_obs_sample = Variable(torch.from_numpy(next_obs_sample).type(dtype)) / 255.0
             done_mask = Variable(torch.from_numpy(done_mask)).type(dtype)
 
             # calculate errors
@@ -247,12 +266,13 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             model_q = Q(obs_sample).gather(1, act_sample.unsqueeze(1)).squeeze()
 
             error_sample = criterion(model_q, target_q)
+            clipped_error = error_sample.clamp(-1, 1)
             # print(f"error : {error_sample.size()}")
             # gradient decent
             optimizer.zero_grad()
             # why current_Q_values.backward
             # model_q.backward(error_sample)
-            error_sample.backward()
+            clipped_error.backward()
             optimizer.step()
             num_param_updates += 1
             # print(f"step = {num_param_updates}")
@@ -276,7 +296,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
         if t % LOG_EVERY_N_STEPS == 0 and t > learning_starts:
             dot = make_dot(model_q, params=dict(Q.named_parameters()))
             dot.render(directory="autograd graph")
-            print(f"error : {(model_q - target_q)[0]}")
+            # print(f"error : {(model_q - target_q)[0]}")
             print(f"error before :\t{criterion(model_q, target_q)}")
             print(f"error after : \t{criterion(model_q_after, target_q)}")
 
@@ -291,3 +311,6 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             with open("statistics.pkl", "wb") as f:
                 pickle.dump(Statistic, f)
                 print("Saved to %s" % "statistics.pkl")
+
+            # save model parameters
+            torch.save(Q.state_dict(), PATH)
