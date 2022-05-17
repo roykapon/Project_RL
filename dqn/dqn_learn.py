@@ -21,10 +21,10 @@ import torch.autograd as autograd
 from utils.replay_buffer import ReplayBuffer
 from utils.gym import get_wrapper_by_name
 
-LEARNING_RATE = 0.0005
+# LEARNING_RATE = 0.0005
 # model parameters path
 PATH = f"G:/My Drive/Uni Exercises/RL/Project_RL/model_parameters/parameters_lr={str(LEARNING_RATE)}.pt"
-LOAD_MODEL = True
+LOAD_MODEL = False
 
 
 USE_CUDA = torch.cuda.is_available()
@@ -138,8 +138,8 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
     ######
 
     # Construct Q network optimizer function
-    # optimizer = optimizer_spec.constructor(Q.parameters(), **optimizer_spec.kwargs)
-    optimizer = torch.optim.SGD(Q.parameters(), lr=LEARNING_RATE)
+    optimizer = optimizer_spec.constructor(Q.parameters(), **optimizer_spec.kwargs)
+    # optimizer = torch.optim.SGD(Q.parameters(), lr=LEARNING_RATE)
 
     # Construct the replay buffer
     replay_buffer = ReplayBuffer(replay_buffer_size, frame_history_len)
@@ -152,7 +152,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
     best_mean_episode_reward = -float("inf")
     last_obs = env.reset()
     # LOG_EVERY_N_STEPS = 10000
-    LOG_EVERY_N_STEPS = 500
+    LOG_EVERY_N_STEPS = 200
 
     # We initialize some variables here
     done = False
@@ -204,8 +204,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
 
         # observe what happens and store in replay buffer
         obs, reward, done, info = env.step(action)
-        if reward > 0:
-            print("goal!")
+
         replay_buffer.store_effect(idx, action, reward, done)
 
         last_obs = obs
@@ -258,25 +257,26 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             # calculate errors
             max_next_q = Q_next(next_obs_sample).detach().max(1)[0]
 
-            # print(f"Q_next q : {Q_next(next_obs_sample).detach().size()}")
             # print(f"max_next q : {max_next_q.size()}")
-            target_q = rew_sample + gamma * max_next_q * (1 - done_mask)
+            target_q = (rew_sample + gamma * max_next_q * (1 - done_mask)).squeeze()
+            # print(f"target_q : {target_q.size()}")
             # print(f"target q : {target_q.size()}")
             # print(f"model q : {Q(obs_sample).size()}")
-            model_q = Q(obs_sample).gather(1, act_sample.unsqueeze(1)).squeeze()
+            current_q = Q(obs_sample).gather(1, act_sample.unsqueeze(1)).squeeze()
+            # print(f"current_q : {current_q.size()}")
 
-            error_sample = criterion(model_q, target_q)
-            clipped_error = error_sample.clamp(-1, 1)
-            # print(f"error : {error_sample.size()}")
+            error_sample = target_q - current_q
+            clipped_error = torch.clip(error_sample, -1, 1)
+            d_error = (-1) * clipped_error
             # gradient decent
             optimizer.zero_grad()
             # why current_Q_values.backward
-            # model_q.backward(error_sample)
-            clipped_error.backward()
+            # current_q.backward(error_sample)
+            current_q.backward(d_error.data)
             optimizer.step()
             num_param_updates += 1
             # print(f"step = {num_param_updates}")
-            model_q_after = Q(obs_sample).gather(1, act_sample.unsqueeze(1)).squeeze()
+            current_q_after = Q(obs_sample).gather(1, act_sample.unsqueeze(1)).squeeze()
 
             # Periodically update
             if num_param_updates % target_update_freq == 0:
@@ -294,11 +294,11 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
         Statistic["best_mean_episode_rewards"].append(best_mean_episode_reward)
 
         if t % LOG_EVERY_N_STEPS == 0 and t > learning_starts:
-            dot = make_dot(model_q, params=dict(Q.named_parameters()))
+            dot = make_dot(current_q, params=dict(Q.named_parameters()))
             dot.render(directory="autograd graph")
-            # print(f"error : {(model_q - target_q)[0]}")
-            print(f"error before :\t{criterion(model_q, target_q)}")
-            print(f"error after : \t{criterion(model_q_after, target_q)}")
+            # print(f"error : {(current_q - target_q)[0]}")
+            print(f"error before :\t{criterion(current_q, target_q)}")
+            print(f"error after : \t{criterion(current_q_after, target_q)}")
 
             print("Timestep %d" % (t,))
             print("mean reward (100 episodes) %f" % mean_episode_reward)

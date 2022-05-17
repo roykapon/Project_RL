@@ -200,7 +200,7 @@ def dqn_learing(env, q_func, optimizer_spec, exploration, stopping_criterion=Non
             # Clear previous gradients before backward pass
             optimizer.zero_grad()
             # run backward pass
-            current_Q_values.backward(d_error.data)
+            current_Q_values.backward(d_error.)
 
             # Perfom the update
             optimizer.step()
